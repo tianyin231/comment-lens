@@ -1,5 +1,7 @@
 # 任务：搭 Jev 判断层的题目集 + 校准脚手架（Python，PC 上跑）
 
+> 上游历史任务：本文针对聊天意图与候选回复，不适用于当前评论情绪分类。评论风向的模型入口是 `app/src/main/java/com/jev/probe/comments/JevSentimentClient.kt`，说明见 [README](../../README.md)。
+
 你在 `H:\ai_tool\jev-android`。**先读 `CLAUDE.md` 和 `docs/acceptance.md`**，里面有硬约束和验收标准。
 
 ## 背景

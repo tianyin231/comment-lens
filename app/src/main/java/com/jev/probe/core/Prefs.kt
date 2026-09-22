@@ -2,6 +2,10 @@ package com.jev.probe.core
 
 import android.content.Context
 import android.util.Log
+import com.jev.probe.comments.CommentApiConfig
+import com.jev.probe.comments.CommentEngine
+import com.jev.probe.comments.CommentCaptureMode
+import com.jev.probe.comments.JevCommentConfig
 
 /**
  * App-private config store. Holds the three API routes (judge / reply / vision),
@@ -221,6 +225,34 @@ class Prefs(context: Context, prefsName: String = PREFS_MAIN) {
 
     /** Readiness gate: the judge route is the one that must be configured. */
     fun hasKey(): Boolean = judgeKey.isNotBlank()
+
+    // Jev 是评论判断的默认入口，原生成接口仅在用户主动切换时使用。
+    fun commentApiConfig(): CommentApiConfig = CommentApiConfig(replyBaseUrl, replyKey, replyModel)
+    fun commentJevConfig(): JevCommentConfig = JevCommentConfig(judgeEndpoint(), judgeKey, judgeModel, commentConfidenceFloor)
+    fun hasCommentKey(): Boolean = when (commentEngine) {
+        CommentEngine.JEV -> judgeKey.isNotBlank()
+        CommentEngine.GENERATIVE -> replyKey.isNotBlank()
+    }
+
+    var commentCaptureMode: CommentCaptureMode
+        get() = CommentCaptureMode.entries.firstOrNull { it.name == sp.getString("comment_capture_mode", "") } ?: CommentCaptureMode.MANUAL
+        set(v) = sp.edit().putString("comment_capture_mode", v.name).apply()
+
+    var commentEngine: CommentEngine
+        get() = CommentEngine.entries.firstOrNull { it.name == sp.getString("comment_engine", "") } ?: CommentEngine.JEV
+        set(v) = sp.edit().putString("comment_engine", v.name).apply()
+
+    var commentConfidenceFloor: Double
+        get() = sp.getInt("comment_confidence_floor", 50).coerceIn(0, 100) / 100.0
+        set(v) = sp.edit().putInt("comment_confidence_floor", (v * 100).toInt().coerceIn(0, 100)).apply()
+
+    var commentCropTop: Int
+        get() = sp.getInt("comment_crop_top", 15).coerceIn(0, 90)
+        set(v) = sp.edit().putInt("comment_crop_top", v.coerceIn(0, 90)).apply()
+
+    var commentCropBottom: Int
+        get() = sp.getInt("comment_crop_bottom", 90).coerceIn(10, 100)
+        set(v) = sp.edit().putInt("comment_crop_bottom", v.coerceIn(10, 100)).apply()
 
     companion object {
         private const val TAG = "JEVASSIST"

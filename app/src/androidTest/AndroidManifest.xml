@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="评论 OCR 合成测试">
+        <activity android:name="com.jev.probe.fixtures.CommentFixtureActivity"
+            android:exported="true" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

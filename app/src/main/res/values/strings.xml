@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">Jev助手</string>
-    <string name="a11y_desc_disguised">读取当前聊天窗口文字，用于生成回复建议。不会自动发送消息。</string>
+    <string name="app_name">评论风向</string>
+    <string name="a11y_desc_disguised">读取当前帖子和评论正文，在屏幕边缘显示情绪条。默认手动，可开启自动跟随。最近 5 帖的文字和结果保留本地缓存，返回同帖可恢复；只将新文字发送至你配置的 Jev 接口判断，不上传历史上下文。开启服务即可，无需开启快捷方式按钮。</string>
 </resources>

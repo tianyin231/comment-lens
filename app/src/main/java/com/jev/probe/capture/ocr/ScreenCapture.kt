@@ -9,6 +9,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
+import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -115,7 +116,10 @@ class ScreenCapture(
         // some OEM builds that refuse a whole-display capture. Fall back to the
         // display shot when the window id is unknown or the call is unavailable.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val node = runCatching { service.rootInActiveWindow }.getOrNull()
+            val node = runCatching {
+                service.windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }?.root
+                    ?: service.rootInActiveWindow
+            }.getOrNull()
             val windowId = node?.windowId
             if (windowId != null && windowId != -1) {
                 windowBounds = runCatching {

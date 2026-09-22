@@ -19,11 +19,12 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.jev.probe"
+        applicationId = "com.jev.commentlens"
         minSdk = 30
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "0.3.2"
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
 
         // ML Kit's bundled Chinese recognizer ships native libs for every ABI.
         // The target phone (and every phone this can run on: minSdk 30) is
@@ -78,4 +79,7 @@ dependencies {
     // On-device OCR. The *bundled* Chinese model (not the play-services variant):
     // it works on phones with no Google Play services and needs no model download.
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

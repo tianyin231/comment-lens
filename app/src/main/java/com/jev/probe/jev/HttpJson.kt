@@ -52,17 +52,19 @@ object HttpJson {
         key: String,
         body: JSONObject,
         route: String,
-        extraHeaders: Map<String, String> = emptyMap()
+        extraHeaders: Map<String, String> = emptyMap(),
+        maxAttempts: Int = MAX_ATTEMPTS,
+        timeoutMs: Int = 40000
     ): JSONObject {
         var attempt = 0
         var last: ApiException? = null
-        while (attempt < MAX_ATTEMPTS) {
+        while (attempt < maxAttempts) {
             var conn: HttpURLConnection? = null
             try {
                 conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 15000
-                    readTimeout = 40000
+                    connectTimeout = minOf(15000, timeoutMs)
+                    readTimeout = timeoutMs
                     doOutput = true
                     setRequestProperty("Authorization", "Bearer $key")
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -74,7 +76,7 @@ object HttpJson {
                 if (code == 429 || code == 529) {
                     last = ApiException(route, code, "服务繁忙，已重试")
                     attempt++
-                    if (attempt < MAX_ATTEMPTS) Thread.sleep(500L * (1L shl attempt))
+                    if (attempt < maxAttempts) Thread.sleep(500L * (1L shl attempt))
                     continue
                 }
                 // Branch on the status code FIRST. Reading the body must never be
@@ -93,11 +95,11 @@ object HttpJson {
                 if (e.status != null && e.status in 400..499) throw e  // client error: no retry
                 last = e
                 attempt++
-                if (attempt < MAX_ATTEMPTS) Thread.sleep(500L * (1L shl attempt))
+                if (attempt < maxAttempts) Thread.sleep(500L * (1L shl attempt))
             } catch (e: Exception) {
                 last = ApiException(route, null, describe(e))
                 attempt++
-                if (attempt < MAX_ATTEMPTS) Thread.sleep(500L * (1L shl attempt))
+                if (attempt < maxAttempts) Thread.sleep(500L * (1L shl attempt))
             } finally {
                 conn?.disconnect()
             }

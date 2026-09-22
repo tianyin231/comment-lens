@@ -1,58 +1,39 @@
-# Jev 聊天助手（安卓）— 全平台非侵入对话副驾
+# 评论风向开发说明
 
-挂在任意聊天 App 旁边（微信、飞书已适配）的非侵入式助手：读到对方最新消息 → 调 Jev 判断 → 悬浮窗给出分析和 3 条候选回复（Jev 排序）→ 人一键填入微信输入框。**发送永远由人手动点，程序不自动发。**
+本仓库是 Jev 聊天助手的 Android 二开项目，当前目标是在用户正常浏览小黑盒帖子时显示评论情绪。产品范围以 [README.md](README.md) 为准。
 
-## 硬约束（所有人必须遵守）
+## 实现约定
 
-1. **不 hook、不 Xposed、不改目标 App、不读其数据库**。只用系统无障碍服务与截屏。
-2. **绝不自动发送消息**，绝不点微信的发送按钮。填入输入框后停手。
-3. **不碰钱**：不触碰转账、红包、收款码相关任何界面元素。
-4. **路径全 ASCII**：Android 构建工具在 Windows 上不接受中文路径。项目只能在 `H:\ai_tool\jev-android`。
-5. **密钥不落盘、不进日志、不进 git**：OpenRouter key 从环境变量 `OPENROUTER_API_KEY` 读，或 App 加密设置项。任何文件里都不许出现 `sk-or-` 开头的字符串。
-6. 编码一律 UTF-8。Windows 中文环境下 PowerShell 用 pwsh 7+，Python 读写文件必须显式 `encoding='utf-8'`。
-7. 禁止 `git commit` / `git push`，由人拍板。
+- Kotlin、传统 Android View；minSdk 30，compileSdk / targetSdk 35，包名 `com.jev.commentlens`。
+- 使用系统无障碍节点读取可见正文，不修改目标应用、不注入、不读取其数据库，不自动翻页、点赞或发送内容。
+- 默认手动，可开启自动。帖子正文与评论分别判断；Jev 每段文字一道选择题，不附加历史、父评论或其他上下文。
+- 正负面比例使用本帖全部已判断的去重评论，待判断内容不进分母，不使用最近 30 条窗口。
+- 最近 5 帖保留完整文字与结果，返回时恢复；相同文字和已判断结果不重复上传。缓存只存应用私有目录。
+- 页面或模式切换后，旧请求不能污染当前帖。详情更新保持当前阅读位置。
+- 当前只适配小黑盒。仓库保留的聊天回复、知识库、OCR 和旧样本模块，不等于当前产品已支持这些功能。
+- 保留 `LICENSE`、`NOTICE` 和来源声明。真实 API 密钥、签名材料、设备缓存、抓屏及账号数据不提交、不写日志。
+- UTF-8 编码，构建路径使用 ASCII；JDK / SDK 路径由本地环境配置，不在代码中绑定维护者的电脑路径。
 
-## 技术栈
+## 主要入口
 
-- Kotlin，传统 View + XML，**不用 Compose**
-- minSdk 30，compileSdk / targetSdk 35
-- JDK 17（`H:\android\jdk`），Android SDK 在 `H:\android\sdk`，Gradle 缓存 `H:\android\gradle-home`
-- 目标机：小米 14（houji / 23127PN0CC），HyperOS 3.0 / Android 16 (SDK 36)，微信 8.0.78
-- 模型客户端分三路：`jev/JudgeClient`（判断）、`jev/ReplyClient`（回复）、`jev/VisionClient`（视觉，OCR 用），共用 `jev/HttpJson`；配置在 `core/Prefs`（`judge*` / `reply*` / `vision*` 字段），旧密钥一次性迁移，标记位 `prefs_migrated_v13`。
-- ML Kit `com.google.mlkit:text-recognition-chinese:16.0.1`（bundled，不是 play-services 版），`ndk.abiFilters` 只留 `arm64-v8a`。
+源码根目录：`app/src/main/java/com/jev/probe/`。
 
-## 关键背景（2026-09-21 实测结论，别重复踩）
+- `capture/CommentNodeReader.kt` / `comments/CommentPage.kt`：读取、解析平台正文和帖子标识。
+- `capture/ChatCaptureService.kt`：前台页面跟随、读屏线程、Jev 队列、缓存保存。
+- `comments/LiveSentiment.kt`：完整评论列表、全帖统计、去重和缓存顺序。
+- `comments/LiveCacheCodec.kt` / `LiveCacheStore.kt`：序列化和原子写入。
+- `comments/JevSentimentClient.kt`：独立文本情绪判断；测试在 `app/src/test/`。
+- `overlay/OverlayController.kt`：细条及详情。
 
-- 微信 8.0.52 起对普通无障碍服务**混淆/隐藏节点**。本机实测 `uiautomator dump` 对微信任何界面只返回一个空根节点。
-- 社区绕法：把无障碍服务的类名注册成系统内置的 `com.google.android.accessibility.selecttospeak.SelectToSpeakService`。**对 8.0.78 是否仍有效未验证，这就是探针 App 要回答的问题。**
-- 兜底路线：无障碍服务的 `takeScreenshot()` + 本地 OCR（ML Kit），同样零 token。
-- 飞书 Android（2026-09-21 实测）：消息正文自绘，无障碍树里**没有文字**（伪装服务与 `uiautomator dump` 一致），只有 `bubble_content_container` 气泡位置、`group_name` 标题、`kb_rich_text_content` 输入框；正文要走 takeScreenshot + OCR。飞书默认左对齐布局，我/对方不能按左右判。
-- 手机 QQ 9.3.50（2026-09-21 实测，小米 14 / 1200×2670）：节点**不混淆**，普通 `uiautomator dump` 即可读。消息正文 `com.tencent.mobileqq:id/mjn`（TextView，text 即正文），群昵称 `id/mjq`，标题 `id/371`，输入框 `id/input`，发送按钮 `id/send_btn`（**绝不 performAction**）。时间戳与系统提示条无 id，只采 `id/mjn` 就自然排除。
-- QQ 全程是 `SplashActivity`（fragment 架构），**不能按 activity 判断是否在聊天窗**，只能看树里有没有 `id/mjn` / `id/input`。头像贴各自外侧（别人 left≈width×0.13，自己 right≈width−width×0.13），判「我/对方」要比左右两边离头像列的距离，不能用中心点（长消息中心会过半屏）。
-- X / Twitter 12.25.2（2026-09-21 实测，小米 14 / 1200×2670 / 中文界面）：私信页是 **Compose UI，消息节点没有 resource-id**，`android.view.View`、全宽 `[0,y][1200,y+h]`、text 为空，**全部信息在 content-desc**，格式 `发件人：正文。8:11 上午。Read。`（全角冒号分隔、`。` 粘字段、末尾可能有时间和 `Read`）。附件行 `All-In：附加的帖子。。` 内部嵌套引用帖子的 TextView，只采 View 自身的 desc、不采子节点。
-- X **所有页面都是 `com.x.android.main.MainActivity`，不能按 activity 判窗**：对话页有 EditText（唯一那个，[204,2424][1152,2568]），私信列表页没有 → 靠「树里有没有可编辑节点」判断。列表页的行长得也像（全宽 View + desc），但格式是 `All-In, @all_in_2026, 正文…`，用含 `, @` 再排除一次。发送按钮输入后才出现，**绝不点**。
-- 采集层按 App 分发：`capture/ChatAppAdapter.kt` 一个 App 一个适配器，`ChatCaptureService` 按前台包名查表；下游通用。
-- Jev = TypeSafe 的判断模型，只回答选择题/打分/是非，不生成文字。走 OpenRouter：
-  `POST https://openrouter.ai/api/alpha/decisions`，model `typesafe/jev-1.13`，
-  body `{model, state, questions}`，答案在 `answers`。实测 7 题一次约 900 ms、约 1000 输入 token、0.00004 美元。
-- Jev 主训练语言是英文：**题目的 instructions 和 criteria 用英文写，state 里的聊天内容保留中文原文。**
-- 知识库 / 上下文数据在 `filesDir/kb` 下的 JSON 文件（`notes.json` / `contacts.json` / `logs/<contactId>.json`）；`KbStore` 单锁 + 原子写（先写 `.tmp` 再 rename）。`ContextBuilder` 只做 alwaysOn 笔记全带 + 标签/标题包含匹配（不做语义检索、不打分），**不自动建档、历史默认关闭（`contextEnabled=false`）**。
-- Kotlin 字符串模板 `$x` 后面紧跟中文标点（如 `」`、`）`）会被解析成标识符的一部分，导致 `Unresolved reference` 编译错误；**一律写成 `${x}`**。D 阶段在 `KbStore.kt` / `KbSelfCheck.kt` 踩过。
-- OCR 层在 `capture/ocr`：`ScreenCapture` 限频 ≥1s + 失败退避（1s→2s→4s→8s→16s→30s 封顶），错误码 1/2/3/4/6 各给一句人话；`MlKitOcr` 用 bundled 中文模型。适配器契约：`extract` 返回 `null` = 不在聊天窗，返回空消息列表 = 在聊天窗但树里没正文——只有后者才触发 OCR 兜底。
-- 无障碍 XML 加了 `android:canTakeScreenshot="true"`，**改完必须把无障碍关掉再重新开启才生效**，否则 `takeScreenshot` 直接回 errorCode 2。伪装服务（`SelectToSpeakService`）在 HyperOS 上能不能截屏未验；被拒（码 1/2，重开无障碍后仍是）就另起一个不伪装的截屏专用服务，`ScreenCapture` 已按可换宿主的方式封装。
+## 验证与提交
 
-## 目录与文件锁
+```bash
+./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+git diff --check
+```
 
-| 目录 | 归属 | 说明 |
-|---|---|---|
-| `app/`、`gradle/`、根 gradle 文件 | Android 构建方 | 安卓工程 |
-| `tools/jev/` | Jev 判断方 | Python 题目集与校准脚手架，PC 上跑 |
-| `docs/` | 主控 | 验收标准、报告 |
-| `docs/v1.3-plan.md` | 主控 | v1.3 总方案与修订，**所有 worker 必读** |
-| `_reports/` | 所有人 | 每个任务的交付报告写这里 |
+Windows 使用 `gradlew.bat`。按改动范围验证，真实设备检查见 [docs/acceptance.md](docs/acceptance.md)。不要把未完成的平台适配写成已支持。
 
-跨边界的问题**只报告，不改**，由主控收口。
+提交、推送及打标签按用户当前授权执行；发版时同步 `app/build.gradle.kts`、`README.md` 和 `CHANGELOG.md` 的版本。签名配置通过 `JEV_KEYSTORE_PROPS` 指向仓库外文件。
 
-## 报告格式
-
-任务完成后写 `_reports/<任务名>_report.md`：根因或做法（带证据）→ 改了什么（逐条列文件）→ 验收命令的**真实输出**（贴原文，不许编）→ **自验缺口**（没验到的明说）。
+`docs/probe_spec.md`、`docs/v1.3-*.md` 和 `tools/jev/TASK.md` 是上游历史资料，不作为当前功能和任务要求。

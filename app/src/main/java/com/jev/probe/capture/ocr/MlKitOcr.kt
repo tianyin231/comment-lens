@@ -71,7 +71,7 @@ class MlKitOcr : OcrEngine {
         client.process(image)
             .addOnSuccessListener { text ->
                 val lines = ArrayList<OcrLine>()
-                for (block in text.textBlocks) {
+                for ((blockIndex, block) in text.textBlocks.withIndex()) {
                     for (line in block.lines) {
                         val b = line.boundingBox ?: continue
                         val t = line.text.trim()
@@ -80,7 +80,7 @@ class MlKitOcr : OcrEngine {
                             ((b.left + ox) / sx).toInt() + wx,
                             ((b.top + oy) / sy).toInt() + wy,
                             ((b.right + ox) / sx).toInt() + wx,
-                            ((b.bottom + oy) / sy).toInt() + wy)))
+                            ((b.bottom + oy) / sy).toInt() + wy), blockIndex))
                     }
                 }
                 lines.sortBy { it.bounds.top }
