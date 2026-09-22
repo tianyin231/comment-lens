@@ -4,7 +4,7 @@
 
 基于 [Jev 聊天助手](https://github.com/jev-chat/jev-chat-jarvis) 二次开发，使用 Jev 判断文字情绪，由本仓库独立维护。
 
-**当前版本：v0.3.2（测试版）** · Android 11+ · arm64-v8a · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/tianyin231/comment-lens/issues)
+**当前版本：v0.3.2（测试版）** · Android 11+ · arm64-v8a · [下载 APK](https://github.com/tianyin231/comment-lens/releases/download/v0.3.2/comment-lens-v0.3.2-debug.apk) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/tianyin231/comment-lens/issues)
 
 ## 已实现
 
@@ -27,9 +27,9 @@
 
 ## 开始使用
 
-本次 `v0.3.2` 提供源码标签，尚未发布正式签名的安装包。可按下方命令构建测试 APK；仓库 `apk/jev-assistant-v1.3-release.apk` 是上游聊天助手的历史安装包，不是评论风向。
+从 [v0.3.2 发布页](https://github.com/tianyin231/comment-lens/releases/tag/v0.3.2) 下载 `comment-lens-v0.3.2-debug.apk`。这是已在 MuMu 验证的 debug 签名测试包，与此前同签名的测试包可覆盖安装。仓库 `apk/jev-assistant-v1.3-release.apk` 是上游聊天助手的历史安装包，不是评论风向。
 
-1. 安装本项目构建的 APK，打开“评论风向”。
+1. 下载并安装测试 APK，打开“评论风向”。
 2. 进入“实时情绪设置”，选择 Jev 接口预设，填写自己的 API 密钥和模型，点击“测试 Jev”确认连接后保存。
 3. 按首页引导开启无障碍和悬浮窗权限。无障碍只需打开“使用评论风向”，无需开启系统“快捷方式”，以免误触关闭服务。
 4. 打开小黑盒帖子，点击右侧细条，手动分析当前屏幕，或开启“自动跟随帖子”。
