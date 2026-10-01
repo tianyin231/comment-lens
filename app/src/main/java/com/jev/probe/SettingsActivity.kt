@@ -91,7 +91,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         root.addView(test); root.addView(result)
         root.addView(text("当前适配", 17f, bold = true))
-        root.addView(text("小黑盒帖子评论与楼中楼。仅判断评论正文和帖文，昵称、点赞数、推荐内容和图片不参与判断。B 站评论 / 弹幕适配尚未完成。", 12f, sub))
+        root.addView(text("小黑盒帖子评论与楼中楼、B站普通视频页的主评论和回复预览。B站先点标题展开简介，再进入评论；仅判断本屏已加载的评论文字，完整楼中楼暂未适配。昵称、点赞数、推荐内容、图片、视频与弹幕不参与判断。", 12f, sub))
         root.addView(text("最近 5 个帖子的已读文字和判断结果缓存在本机，退出再进入或重启服务后可恢复；第 6 帖会替换最久未访问的一帖。只有新增或尚未判断的文字发送至 Jev，缓存不作为上下文上传。", 12f, sub))
         root.addView(button("保存设置") {
             val value = config()
