@@ -5,7 +5,8 @@ data class LiveText(val id: String, val text: String, val decision: LiveDecision
 data class LiveBatch(val revision: Long, val texts: List<LiveText>)
 
 data class LiveSnapshot(
-    val title: String = "", val post: LiveText? = null, val comments: List<LiveText> = emptyList(), val postKey: String = ""
+    val title: String = "", val post: LiveText? = null, val comments: List<LiveText> = emptyList(), val postKey: String = "",
+    val postSource: String = ""
 ) {
     val judged get() = comments.filter { it.decision != null }
     fun count(sentiment: Sentiment) = judged.count { it.decision?.sentiment == sentiment }
@@ -36,15 +37,20 @@ class LiveSentiment(initialCache: List<LiveSnapshot> = emptyList(), private val 
         if (page.postKey.isBlank()) return false
         val nextKey = "$pkg:${page.postKey}"
         val changed = key != nextKey
+        val body = if (page.postTextAvailable)
+            listOf(page.postTitle, page.postBody).filter { it.isNotBlank() }.joinToString("\n").take(3000) else ""
         if (changed) {
             detach(); key = nextKey
-            val body = listOf(page.postTitle, page.postBody).filter { it.isNotBlank() }.joinToString("\n").take(3000)
             snapshot = cache.remove(key) ?: LiveSnapshot(page.postTitle,
-                body.takeIf { it.isNotBlank() }?.let { LiveText("p", it) }, postKey = key)
+                body.takeIf { it.isNotBlank() }?.let { LiveText("p", it) }, postKey = key, postSource = page.postSource)
             seen.addAll(snapshot.comments.map { CommentText.fingerprint(it.text) })
             nextId = snapshot.comments.maxOfOrNull { it.id.removePrefix("c").toInt() } ?: 0
             cache[key] = snapshot
             while (cache.size > cacheLimit) cache.remove(cache.keys.first())
+        }
+        if (snapshot.post == null && body.isNotBlank()) {
+            snapshot = snapshot.copy(post = LiveText("p", body), postSource = page.postSource)
+            cache[key] = snapshot
         }
         if (collect && page.recognized) {
             val fresh = page.comments.mapNotNull { comment ->
@@ -58,6 +64,18 @@ class LiveSentiment(initialCache: List<LiveSnapshot> = emptyList(), private val 
             }
         }
         return changed
+    }
+
+    /** 用户明确补充正文时只重置帖文判断，评论及其已有判断继续保留。 */
+    fun updatePostText(text: String, source: String): Boolean {
+        val body = text.trim().take(3000)
+        if (key.isBlank() || body.isBlank()) return false
+        val sameText = snapshot.post?.text == body
+        if (sameText && snapshot.postSource == source) return false
+        if (!sameText) revision++
+        snapshot = snapshot.copy(post = if (sameText) snapshot.post else LiveText("p", body), postSource = source)
+        cache[key] = snapshot
+        return true
     }
 
     fun pending(limit: Int = 8): LiveBatch {

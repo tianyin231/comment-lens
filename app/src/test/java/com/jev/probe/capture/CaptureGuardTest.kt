@@ -6,6 +6,13 @@ import org.junit.Test
 
 /** Exercises the ticket checks shared by the service's reader and judge callbacks. */
 class CaptureGuardTest {
+    @Test fun versionedActivitiesAreNavigationButTabsAndWebViewsAreNot() {
+        assertTrue(CaptureGuard.isActivity("com.max.xiaoheihe.MainActivity"))
+        assertTrue(CaptureGuard.isActivity("com.max.xiaoheihe.WebNewsPostPageActivityV2"))
+        assertTrue(CaptureGuard.isActivity("com.max.xiaoheihe.PicturePostPageActivityV2"))
+        assertFalse(CaptureGuard.isActivity("android.webkit.WebView"))
+        assertFalse(CaptureGuard.isActivity("android.widget.RelativeLayout"))
+    }
     private val postWindow = CaptureWindow("com.max.xiaoheihe", 7)
     private fun guard(mode: CommentCaptureMode = CommentCaptureMode.MANUAL) =
         CaptureGuard(mode).apply { updateWindow(postWindow) }

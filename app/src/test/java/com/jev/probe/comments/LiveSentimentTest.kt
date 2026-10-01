@@ -101,6 +101,120 @@ class LiveSentimentTest {
         assertFalse(request.contains("独立正文"))
     }
 
+    @Test fun unavailableBodyCanBeFilledLaterWithoutReplacingCommentsOrFollowingANewPost() {
+        val stream = LiveSentiment()
+        val screen = page("a", "先读到的评论").copy(postTextAvailable = false, postSource = "正文不可读")
+        assertTrue(stream.follow("app", screen, true))
+        assertNull(stream.snapshot.post)
+        val batch = stream.pending()
+        assertEquals(listOf("先读到的评论"), batch.texts.map { it.text })
+        assertTrue(stream.apply(batch, batch.texts.associate { it.id to positive }))
+        val comments = stream.snapshot.comments
+
+        assertFalse(stream.follow("app", screen.copy(postBody = "后补的完整正文",
+            postTextAvailable = true, postSource = "无障碍正文"), true))
+        assertEquals("帖文 a\n后补的完整正文", stream.snapshot.post!!.text)
+        assertEquals("无障碍正文", stream.snapshot.postSource)
+        assertEquals(comments, stream.snapshot.comments)
+        assertEquals(listOf("p"), stream.pending().texts.map { it.id })
+        val supplemented = stream.snapshot
+        assertFalse(stream.follow("app", screen.copy(postBody = "滚动后的正文片段", postTextAvailable = true), true))
+        assertEquals(supplemented, stream.snapshot)
+        assertEquals(stream.snapshot, stream.cachedPosts().single())
+    }
+
+    @Test fun ocrReplacementPreservesCommentDecisionsAndRejectsOldPostBatches() {
+        val stream = LiveSentiment()
+        stream.follow("app", page("a", "已判断评论"), true)
+        val initial = stream.pending()
+        assertTrue(stream.apply(initial, initial.texts.filter { it.id != "p" }.associate { it.id to positive }))
+        stream.follow("app", page("a", "待判断评论"), true)
+        val old = stream.pending()
+        val comments = stream.snapshot.comments
+        val text = "新的OCR正文".repeat(500)
+
+        assertTrue(stream.updatePostText(" \n$text \n", "本地OCR"))
+        assertEquals(text.take(3000), stream.snapshot.post!!.text)
+        assertNull(stream.snapshot.post!!.decision)
+        assertEquals("本地OCR", stream.snapshot.postSource)
+        assertEquals(comments, stream.snapshot.comments)
+        assertFalse(stream.isCurrent(old))
+        assertFalse(stream.apply(old, old.texts.associate { it.id to LiveDecision(Sentiment.NEGATIVE, .9) }))
+        assertEquals(comments, stream.snapshot.comments)
+        assertEquals(listOf("p", "c2"), stream.pending().texts.map { it.id })
+        assertEquals(stream.snapshot, stream.cachedPosts().single())
+        stream.follow("app", page("a", "已判断评论", "待判断评论"), true)
+        assertEquals(text.take(3000), stream.snapshot.post!!.text)
+    }
+
+    @Test fun identicalOcrTextReusesPostDecisionAndKeepsPendingCommentBatchCurrent() {
+        val stream = LiveSentiment()
+        stream.follow("app", page("a", "已判断评论").copy(postTextAvailable = false), true)
+        assertTrue(stream.updatePostText(" OCR正文 ", "本地OCR"))
+        val initial = stream.pending()
+        assertTrue(stream.apply(initial, initial.texts.associate { it.id to positive }))
+        stream.follow("app", page("a", "新增评论").copy(postTextAvailable = false), true)
+        val commentBatch = stream.pending()
+        val post = stream.snapshot.post
+
+        assertFalse(stream.updatePostText(" \nOCR正文\n ", "本地OCR"))
+        assertTrue(stream.updatePostText("OCR正文", "用户核对的OCR"))
+        assertEquals(post, stream.snapshot.post)
+        assertEquals("用户核对的OCR", stream.snapshot.postSource)
+        assertTrue(stream.isCurrent(commentBatch))
+        assertEquals(listOf("新增评论"), stream.pending().texts.map { it.text })
+        assertTrue(stream.apply(commentBatch, commentBatch.texts.associate { it.id to positive }))
+        assertEquals(2, stream.snapshot.judged.size)
+        assertEquals(stream.snapshot, stream.cachedPosts().single())
+    }
+
+    @Test fun emptyOcrOrOcrWithoutAFollowedPostDoesNotChangeState() {
+        val stream = LiveSentiment()
+        assertFalse(stream.updatePostText("OCR正文", "本地OCR"))
+        assertTrue(stream.cachedPosts().isEmpty())
+        stream.follow("app", page("a", "评论"), true)
+        val before = stream.snapshot
+        val batch = stream.pending()
+        assertFalse(stream.updatePostText(" \n ", "本地OCR"))
+        assertEquals(before, stream.snapshot)
+        assertTrue(stream.isCurrent(batch))
+        stream.detach()
+        assertFalse(stream.updatePostText("OCR正文", "本地OCR"))
+        assertEquals(listOf(before), stream.cachedPosts())
+    }
+
+    @Test fun postSourceRoundTripRestoresOcrTextAndResultsWithoutReplacingThemWithPageText() {
+        val stream = LiveSentiment()
+        val screen = page("a", "评论").copy(postTextAvailable = false)
+        stream.follow("app", screen, true)
+        stream.updatePostText("OCR正文", "本地OCR")
+        val batch = stream.pending()
+        stream.apply(batch, batch.texts.associate { it.id to positive })
+        val encoded = LiveCacheCodec.encode(stream.cachedPosts())
+        assertEquals("本地OCR", JSONObject(encoded).getJSONArray("posts").getJSONObject(0).getString("postSource"))
+        val posts = LiveCacheCodec.decode(encoded)
+        assertEquals(stream.cachedPosts(), posts)
+        val restored = LiveSentiment(posts)
+        restored.follow("app", screen.copy(postTextAvailable = true, postSource = "无障碍正文"), true)
+        assertEquals(stream.snapshot, restored.snapshot)
+        assertTrue(restored.pending().texts.isEmpty())
+    }
+
+    @Test fun versionOneCacheWithoutPostSourceStillLoadsPostAndCommentDecisions() {
+        val oldCache = """{"version":1,"posts":[{"key":"app:a","title":"旧缓存帖文",
+            "post":{"id":"p","text":"旧缓存正文","decision":{"sentiment":"positive","confidence":0.9,"original":"positive"}},
+            "comments":[{"id":"c1","text":"旧缓存评论","decision":{"sentiment":"positive","confidence":0.9,"original":"positive"}}]}]}"""
+        val posts = LiveCacheCodec.decode(oldCache)
+        assertEquals("", posts.single().postSource)
+        assertEquals(positive, posts.single().post!!.decision)
+        assertEquals(positive, posts.single().comments.single().decision)
+        assertFalse(JSONObject(LiveCacheCodec.encode(posts)).getJSONArray("posts").getJSONObject(0).has("postSource"))
+        val restored = LiveSentiment(posts)
+        restored.follow("app", page("a", "旧缓存评论"), true)
+        assertEquals("旧缓存正文", restored.snapshot.post!!.text)
+        assertTrue(restored.pending().texts.isEmpty())
+    }
+
     @Test fun aLargePendingBacklogIsRetainedAndEventuallyDrained() {
         val stream = LiveSentiment()
         stream.follow("app", page("a", *(1..65).map { "评论 $it" }.toTypedArray()), true)

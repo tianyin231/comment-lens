@@ -2,6 +2,7 @@ package com.jev.probe.capture
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -10,6 +11,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.jev.probe.comments.*
 import com.jev.probe.core.Prefs
+import com.jev.probe.capture.ocr.MlKitOcr
+import com.jev.probe.capture.ocr.ScreenCapture
 import com.jev.probe.overlay.OverlayController
 import java.util.concurrent.Executors
 
@@ -34,6 +37,12 @@ open class ChatCaptureService : AccessibilityService() {
     private var failure = ""
     private var elapsed = 0L
     private var keepAlive = false
+    private data class OcrRequest(val token: CaptureGuard.Token, val postKey: String, val screenRevision: Long)
+    private var ocrRequest: OcrRequest? = null
+    private var ocrRunning = false
+    private var ocrAreas = emptyList<NodeArea>()
+    private var screenRevision = 0L
+    private var lastScroll = ""
     private val automatic get() = prefs.commentCaptureMode == CommentCaptureMode.AUTO
     private val poll = object : Runnable {
         override fun run() {
@@ -52,6 +61,10 @@ open class ChatCaptureService : AccessibilityService() {
         })
         overlay = OverlayController(this).apply {
             onCapture = { manualRead = true; manualRun = true; failure = ""; retryAt = 0; refresh() }
+            onOcr = {
+                ocrRequest = capture.token()?.let { OcrRequest(it, stream.snapshot.postKey, screenRevision) }
+                failure = ""; refresh()
+            }
             onToggleAuto = {
                 prefs.commentCaptureMode = if (automatic) CommentCaptureMode.MANUAL else CommentCaptureMode.AUTO
                 syncMode(); refresh(); publish()
@@ -63,21 +76,30 @@ open class ChatCaptureService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!alive || event == null) return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            event.className?.toString()?.endsWith("Activity") == true) {
+            CaptureGuard.isActivity(event.className?.toString().orEmpty())) {
             // 连续两帖可以复用同一个 Activity 和窗口 ID；每次明确的页面进入事件都失效旧请求。
             // 普通内容更新和滚动不清空本帖，避免长文阅读期间反复丢失进度。
             resetPage()
+        }
+        if (event.packageName?.toString() == "com.max.xiaoheihe") {
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) screenRevision++
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+                val position = "${event.windowId}/${event.className}/${event.scrollX}/${event.scrollY}/${event.fromIndex}/${event.toIndex}"
+                if (position != lastScroll) { lastScroll = position; screenRevision++ }
+            }
         }
     }
 
     private fun syncMode() {
         if (!capture.updateMode(prefs.commentCaptureMode)) return
         stream.invalidateRequests(); manualRead = false; manualRun = false
+        ocrRequest = null
         failure = ""; retryAt = 0
     }
 
     private fun resetPage() {
         capture.invalidate(); stream.detach(); manualRun = false; manualRead = false
+        ocrRequest = null; ocrAreas = emptyList(); screenRevision++; lastScroll = ""
         failure = ""; retryAt = 0; elapsed = 0
         overlay?.hide()
     }
@@ -101,6 +123,12 @@ open class ChatCaptureService : AccessibilityService() {
         val token = checkNotNull(capture.token())
         val collect = automatic || manualRead
         val requested = manualRead
+        val wantsOcr = ocrRequest
+        ocrRequest = null
+        if (wantsOcr != null && !isCurrentOcr(wantsOcr)) {
+            root.recycle()
+            failure = "页面已变化，请停稳后重新识别。"; publish(); return
+        }
         manualRead = false; reading = true
         reader.execute {
             val result = runCatching { CommentPageParser.parse(pkg, CommentNodeReader.read(root)) }
@@ -119,8 +147,10 @@ open class ChatCaptureService : AccessibilityService() {
                     if (changed || previous != stream.snapshot) saveCache()
                     if (changed) { failure = ""; retryAt = 0; elapsed = 0 }
                     if (requested) manualRun = true
+                    ocrAreas = page.ocrAreas
                     overlay?.show()
-                    publish(); analyzeNext()
+                    publish()
+                    if (wantsOcr != null) recognizeArticle(page, wantsOcr) else analyzeNext()
                 }, onFailure = {
                     // 读树失败时无法确认仍是原帖；保留缓存，隐藏旧帖显示，等待下一次完整读取。
                     resetPage()
@@ -130,7 +160,7 @@ open class ChatCaptureService : AccessibilityService() {
     }
 
     private fun analyzeNext() {
-        if (!alive || !prefs.enabled || judging || (!automatic && !manualRun)) return
+        if (!alive || !prefs.enabled || judging || ocrRunning || ocrRequest != null || (!automatic && !manualRun)) return
         if (SystemClock.uptimeMillis() < retryAt) return
         if (prefs.judgeKey.isBlank()) { failure = "请在设置中填写 Jev 密钥"; manualRun = false; publish(); return }
         val batch = stream.pending()
@@ -164,18 +194,79 @@ open class ChatCaptureService : AccessibilityService() {
         }
     }
 
+    private fun isCurrentOcr(request: OcrRequest) = alive && prefs.enabled &&
+        capture.accepts(request.token, currentWindowIdentity()) &&
+        stream.snapshot.postKey == request.postKey && screenRevision == request.screenRevision
+
+    private fun recognizeArticle(page: CommentPage, request: OcrRequest) {
+        if (!isCurrentOcr(request)) { failure = "页面已变化，请停稳后重新识别。"; publish(); return }
+        if (page.ocrAreas.isEmpty()) { failure = "请切回长文正文页，再识别本屏文字。"; publish(); return }
+        if (ocrRunning) return
+        fun finish(message: String = "", resumeAnalysis: Boolean = true) {
+            ocrRunning = false
+            if (!alive) return
+            // 旧 OCR 结束时不能清掉已经切换到的新帖。
+            if (!capture.isCurrent(request.token) || stream.snapshot.postKey != request.postKey) {
+                publish(); if (resumeAnalysis) analyzeNext(); return
+            }
+            if (!capture.accepts(request.token, currentWindowIdentity())) { resetPage(); return }
+            failure = message
+            publish(); if (resumeAnalysis) analyzeNext()
+        }
+        ocrRunning = true; publish()
+        ScreenCapture(this, { overlay?.hideForCapture(true) }, { overlay?.hideForCapture(false) }).capture { shot ->
+            if (!isCurrentOcr(request)) {
+                if (shot is ScreenCapture.Result.Ok) shot.bitmap.recycle()
+                finish("页面已变化，请停稳后重新识别。", resumeAnalysis = false); return@capture
+            }
+            if (shot is ScreenCapture.Result.Failed) { finish(shot.humanMessage); return@capture }
+            shot as ScreenCapture.Result.Ok
+            val areas = page.ocrAreas
+            val crop = Rect(
+                ((areas.minOf { it.left } - shot.originX) * shot.scaleX).toInt(),
+                ((areas.minOf { it.top } - shot.originY) * shot.scaleY).toInt(),
+                ((areas.maxOf { it.right } - shot.originX) * shot.scaleX).toInt(),
+                ((areas.maxOf { it.bottom } - shot.originY) * shot.scaleY).toInt())
+            val ocr = MlKitOcr().apply {
+                scaleX = shot.scaleX; scaleY = shot.scaleY; originX = shot.originX; originY = shot.originY
+            }
+            runCatching {
+                ocr.recognize(shot.bitmap, crop) { lines ->
+                    shot.bitmap.recycle()
+                    if (!isCurrentOcr(request)) {
+                        finish("页面已变化，请停稳后重新识别。", resumeAnalysis = false); return@recognize
+                    }
+                    // 仅接纳已确认的标题和正文区域，跳过头像、图片、作者和操作栏。
+                    val text = lines.filter { line -> areas.any { area ->
+                        line.bounds.centerX() in area.left until area.right &&
+                            line.bounds.centerY() in area.top until area.bottom
+                    } }.joinToString("\n") { it.text.trim() }.trim()
+                    if (text.isBlank()) { finish("本屏未识别到正文文字，请滚动到文字处重试。"); return@recognize }
+                    if (stream.updatePostText(text, "本屏 OCR")) saveCache()
+                    manualRun = true; retryAt = 0
+                    finish()
+                }
+            }.onFailure {
+                shot.bitmap.recycle()
+                finish("本机文字识别暂时失败，请重试。")
+            }
+        }
+    }
+
     private fun publish() {
         val pending = stream.pending().texts.isNotEmpty()
         val message = when {
             failure.isNotBlank() -> failure
             cacheFailure.isNotBlank() -> cacheFailure
+            ocrRunning -> "正在本机识别本屏正文…"
             judging -> "Jev 正在判断新文字…"
             automatic && pending -> "等待判断新文字"
             automatic && elapsed == 0L && stream.snapshot.post?.decision != null -> "已恢复本帖缓存 · 等待新评论"
             automatic -> "实时跟随" + if (elapsed > 0) " · 上次 Jev ${elapsed} ms" else " · 等待评论"
             else -> "手动模式 · 点击下方分析本屏"
         }
-        overlay?.update(stream.snapshot, automatic, judging || (reading && manualRun), message, failure.isNotBlank() || cacheFailure.isNotBlank())
+        overlay?.update(stream.snapshot, automatic, judging || ocrRunning || (reading && manualRun), message,
+            failure.isNotBlank() || cacheFailure.isNotBlank(), ocrAvailable = ocrAreas.isNotEmpty())
     }
 
     private fun saveCache() {

@@ -10,6 +10,7 @@ internal object XiaoheiheNodeReader {
         fun snapshot(node: N): CommentNode
         fun hasChildren(node: N): Boolean
         fun recycle(node: N)
+        fun webViews(root: N): List<CommentNode> = emptyList()
     }
 
     fun <N> read(root: N, access: NodeAccess<N>): CommentNode {
@@ -22,8 +23,12 @@ internal object XiaoheiheNodeReader {
         val result = mutableListOf<CommentNode>()
         result += leaves(root, "title_name")
         result += leaves(root, "tv_all_comment")
+        val detail = result.isNotEmpty()
+        val tabs = leaves(root, "tv_tab_title")
+        val articleTabs = tabs.map { it.text }.containsAll(listOf("正文", "评论"))
         // 缺少已知详情标志时，不继续读取可能属于首页卡片的正文。
-        if (result.isEmpty()) return CommentNode()
+        if (!detail && !articleTabs) return CommentNode()
+        result += tabs
         query(root, "post_like") { posts ->
             posts.forEach { post ->
                 result += access.snapshot(post).copy(children = leaves(post, "bbs_name").take(1))
@@ -33,6 +38,10 @@ internal object XiaoheiheNodeReader {
         query(root, "post_content_container") { bodies ->
             bodies.forEach { body ->
                 result += access.snapshot(body).copy(children = leaves(body, "tv_title") + leaves(body, "tv_desc"))
+            }
+            // 长文滚动后，正文/评论标签会被作者标题栏替换。
+            if (bodies.isEmpty() && (articleTabs || detail)) {
+                result += access.webViews(root).map { it.copy(id = "xiaoheihe_web") }
             }
         }
         query(root, "vg_comments_detail") { rows ->

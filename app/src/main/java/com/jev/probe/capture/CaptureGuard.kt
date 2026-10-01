@@ -30,4 +30,10 @@ internal class CaptureGuard(initialMode: CommentCaptureMode = CommentCaptureMode
 
     // 当前窗口来自回调时的重新读取，也能拦住轮询尚未观察到的前台切换。
     fun accepts(token: Token, current: CaptureWindow?) = isCurrent(token) && token.window == current
+
+    companion object {
+        // 小黑盒的文章和图片详情类名以 ActivityV2 结尾。
+        fun isActivity(className: String) = className.substringAfterLast('.')
+            .matches(Regex(".*Activity(?:V[0-9]+)?"))
+    }
 }
