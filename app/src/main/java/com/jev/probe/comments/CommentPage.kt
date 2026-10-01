@@ -44,12 +44,17 @@ object CommentPageParser {
     }
 
     private fun xiaoheihe(root: CommentNode): CommentPage {
-        val post = root.named("post_content_container").firstOrNull()
-        val title = post?.named("tv_title")?.firstOrNull()?.text?.trim().orEmpty()
-        val body = post?.value("tv_desc").orEmpty()
-        val author = root.named("post_like").firstOrNull()?.value("bbs_name").orEmpty().ifBlank { root.value("title_name") }
-        // 没有暴露平台帖子 ID 时，用作者、标题、正文识别换帖；服务另行处理页面导航。
-        val key = if (title.isBlank()) "" else MessageDigest.getInstance("SHA-256")
+        // 首页卡片也可能复用正文控件；必须同时有详情页的标题栏或评论区标志。
+        // 标志和正文可以滚出可视区域，但仍留在无障碍树中，不能按 visible 丢弃。
+        val detail = root.named("title_name").any() || root.named("tv_all_comment").any()
+        val post = root.named("post_content_container").toList().singleOrNull()
+        if (!detail || post == null) return CommentPage(notice = "当前未能确定小黑盒帖子正文，请打开单篇帖子。")
+        val title = post.value("tv_title")
+        val body = post.named("tv_desc").map { it.text.trim() }.filter { it.isNotBlank() }.joinToString("\n")
+        val author = root.named("post_like").toList().singleOrNull()?.value("bbs_name").orEmpty()
+            .ifBlank { root.value("title_name") }
+        // 长文可能没有独立标题。用完整正文生成标识，不能把文章的相同开头当作同一帖。
+        val key = if (title.isBlank() && body.isBlank()) "" else MessageDigest.getInstance("SHA-256")
             .digest("$author\u0000$title\u0000$body".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
         val rows = root.named("vg_comments_detail").toList()
         val comments = mutableListOf<CapturedComment>()

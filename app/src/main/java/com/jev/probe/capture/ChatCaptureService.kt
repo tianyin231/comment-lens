@@ -27,17 +27,13 @@ open class ChatCaptureService : AccessibilityService() {
     private var alive = false
     private var reading = false
     private var judging = false
-    private var navigation = 0L
-    private var foreground = ""
-    private var activity = ""
-    private var appWindow = -1
+    private val capture = CaptureGuard()
     private var manualRead = false
     private var manualRun = false
     private var retryAt = 0L
     private var failure = ""
     private var elapsed = 0L
     private var keepAlive = false
-    private var lastMode = CommentCaptureMode.MANUAL
     private val automatic get() = prefs.commentCaptureMode == CommentCaptureMode.AUTO
     private val poll = object : Runnable {
         override fun run() {
@@ -49,7 +45,7 @@ open class ChatCaptureService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        alive = true; prefs = Prefs(this); lastMode = prefs.commentCaptureMode
+        alive = true; prefs = Prefs(this); capture.updateMode(prefs.commentCaptureMode)
         cache = LiveCacheStore(this)
         stream = LiveSentiment(runCatching { cache.load() }.getOrElse {
             cacheFailure = "旧缓存未能读取，当前内容会重新判断"; emptyList()
@@ -68,21 +64,20 @@ open class ChatCaptureService : AccessibilityService() {
         if (!alive || event == null) return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             event.className?.toString()?.endsWith("Activity") == true) {
-            val next = "${event.packageName}/${event.className}/${event.windowId}"
-            if (activity.isNotBlank() && activity != next) resetPage()
-            activity = next
+            // 连续两帖可以复用同一个 Activity 和窗口 ID；每次明确的页面进入事件都失效旧请求。
+            // 普通内容更新和滚动不清空本帖，避免长文阅读期间反复丢失进度。
+            resetPage()
         }
     }
 
     private fun syncMode() {
-        if (lastMode == prefs.commentCaptureMode) return
-        lastMode = prefs.commentCaptureMode
+        if (!capture.updateMode(prefs.commentCaptureMode)) return
         stream.invalidateRequests(); manualRead = false; manualRun = false
         failure = ""; retryAt = 0
     }
 
     private fun resetPage() {
-        navigation++; stream.detach(); manualRun = false; manualRead = false
+        capture.invalidate(); stream.detach(); manualRun = false; manualRead = false
         failure = ""; retryAt = 0; elapsed = 0
         overlay?.hide()
     }
@@ -94,16 +89,16 @@ open class ChatCaptureService : AccessibilityService() {
             if (keepAlive) runCatching { KeepAliveService.start(this) }
             else { stopService(Intent(this, KeepAliveService::class.java)); resetPage() }
         }
-        if (!prefs.enabled || reading) return
-        val root = currentAppRoot() ?: return
+        if (!prefs.enabled) return
+        val root = currentAppRoot() ?: run { capture.updateWindow(null); resetPage(); return }
         val pkg = root.packageName?.toString().orEmpty()
-        if (pkg != foreground || root.windowId != appWindow) {
-            resetPage(); foreground = pkg; appWindow = root.windowId
-        }
+        if (capture.updateWindow(CaptureWindow(pkg, root.windowId))) resetPage()
         // 只读取已经有明确正文选择器的平台，不把整个屏幕当评论。
         if (pkg != "com.max.xiaoheihe") { root.recycle(); overlay?.hide(); return }
+        // 即使旧读屏尚未结束，也先检测前台窗口，及时隐藏并失效旧帖判断。
+        if (reading) { root.recycle(); return }
         // 一些页面静止时也持续发滚动事件；按固定频率读取，不能等待“滚动结束”。
-        val token = navigation
+        val token = checkNotNull(capture.token())
         val collect = automatic || manualRead
         val requested = manualRead
         manualRead = false; reading = true
@@ -112,12 +107,11 @@ open class ChatCaptureService : AccessibilityService() {
             root.recycle()
             main.post {
                 reading = false
-                if (!alive || !prefs.enabled || token != navigation) return@post
+                if (!alive) return@post
+                syncMode()
+                if (!prefs.enabled || !capture.isCurrent(token)) return@post
                 // 读树期间可能已切换窗口；先核对，避免短暂显示上一帖的结果。
-                val current = currentAppRoot()
-                val same = current?.packageName?.toString() == pkg && current.windowId == appWindow
-                current?.recycle()
-                if (!same) { resetPage(); return@post }
+                if (!capture.accepts(token, currentWindowIdentity())) { resetPage(); return@post }
                 result.fold(onSuccess = { page ->
                     if (page.postKey.isBlank()) { resetPage(); return@fold }
                     val previous = stream.snapshot
@@ -128,7 +122,8 @@ open class ChatCaptureService : AccessibilityService() {
                     overlay?.show()
                     publish(); analyzeNext()
                 }, onFailure = {
-                    failure = "暂时读不到评论，稍后自动重试"; publish()
+                    // 读树失败时无法确认仍是原帖；保留缓存，隐藏旧帖显示，等待下一次完整读取。
+                    resetPage()
                 })
             }
         }
@@ -140,7 +135,7 @@ open class ChatCaptureService : AccessibilityService() {
         if (prefs.judgeKey.isBlank()) { failure = "请在设置中填写 Jev 密钥"; manualRun = false; publish(); return }
         val batch = stream.pending()
         if (batch.texts.isEmpty()) { manualRun = false; publish(); return }
-        val nav = navigation
+        val token = capture.token() ?: return
         val config = prefs.commentJevConfig()
         judging = true; failure = ""; publish()
         judge.execute {
@@ -149,8 +144,11 @@ open class ChatCaptureService : AccessibilityService() {
             val duration = SystemClock.elapsedRealtime() - started
             main.post {
                 judging = false
-                if (!alive || !prefs.enabled) return@post
-                if (nav == navigation && stream.isCurrent(batch) && (automatic || manualRun)) {
+                if (!alive) return@post
+                syncMode()
+                if (!prefs.enabled) return@post
+                if (capture.isCurrent(token) && stream.isCurrent(batch) && (automatic || manualRun)) {
+                    if (!capture.accepts(token, currentWindowIdentity())) { resetPage(); return@post }
                     result.fold(onSuccess = { decisions ->
                         if (stream.apply(batch, decisions)) { elapsed = duration; failure = ""; retryAt = 0; saveCache() }
                     }, onFailure = { error ->
@@ -199,9 +197,15 @@ open class ChatCaptureService : AccessibilityService() {
         return app?.root ?: rootInActiveWindow?.takeIf { overlay?.ownsWindow(it.windowId) != true }
     }
 
+    private fun currentWindowIdentity(): CaptureWindow? {
+        val root = currentAppRoot() ?: return null
+        return try { CaptureWindow(root.packageName?.toString().orEmpty(), root.windowId) }
+        finally { root.recycle() }
+    }
+
     override fun onInterrupt() { if (alive) resetPage() }
     override fun onDestroy() {
-        alive = false; navigation++; main.removeCallbacksAndMessages(null)
+        alive = false; capture.invalidate(); main.removeCallbacksAndMessages(null)
         overlay?.hide(); reader.shutdownNow(); judge.shutdownNow(); disk.shutdown()
         stopService(Intent(this, KeepAliveService::class.java)); super.onDestroy()
     }
