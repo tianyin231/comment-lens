@@ -43,6 +43,7 @@ open class ChatCaptureService : AccessibilityService() {
     private var ocrAreas = emptyList<NodeArea>()
     private var screenRevision = 0L
     private var lastScroll = ""
+    private var captureUnavailable = ""
     private val automatic get() = prefs.commentCaptureMode == CommentCaptureMode.AUTO
     private val poll = object : Runnable {
         override fun run() {
@@ -100,6 +101,7 @@ open class ChatCaptureService : AccessibilityService() {
     private fun resetPage() {
         capture.invalidate(); stream.detach(); manualRun = false; manualRead = false
         ocrRequest = null; ocrAreas = emptyList(); screenRevision++; lastScroll = ""
+        captureUnavailable = ""
         failure = ""; retryAt = 0; elapsed = 0
         overlay?.hide()
     }
@@ -114,9 +116,12 @@ open class ChatCaptureService : AccessibilityService() {
         if (!prefs.enabled) return
         val root = currentAppRoot() ?: run { capture.updateWindow(null); resetPage(); return }
         val pkg = root.packageName?.toString().orEmpty()
-        if (capture.updateWindow(CaptureWindow(pkg, root.windowId))) resetPage()
+        val window = windowIdentity(root)
+        if (capture.updateWindow(window)) resetPage()
         // 只读取已经有明确正文选择器的平台，不把整个屏幕当评论。
-        if (pkg != "com.max.xiaoheihe") { root.recycle(); overlay?.hide(); return }
+        if (pkg !in listOf("com.max.xiaoheihe", "tv.danmaku.bili") || window == null) {
+            root.recycle(); overlay?.hide(); return
+        }
         // 即使旧读屏尚未结束，也先检测前台窗口，及时隐藏并失效旧帖判断。
         if (reading) { root.recycle(); return }
         // 一些页面静止时也持续发滚动事件；按固定频率读取，不能等待“滚动结束”。
@@ -141,6 +146,18 @@ open class ChatCaptureService : AccessibilityService() {
                 // 读树期间可能已切换窗口；先核对，避免短暂显示上一帖的结果。
                 if (!capture.accepts(token, currentWindowIdentity())) { resetPage(); return@post }
                 result.fold(onSuccess = { page ->
+                    if (pkg == "tv.danmaku.bili" && page.postKey != token.window.contentKey) {
+                        resetPage(); return@fold
+                    }
+                    if (page.needsIdentity) {
+                        capture.invalidate(); stream.detach(); manualRun = false; manualRead = false
+                        ocrRequest = null; ocrAreas = emptyList(); failure = ""; retryAt = 0; elapsed = 0
+                        captureUnavailable = "请先展开视频简介"
+                        overlay?.show()
+                        overlay?.update(LiveSnapshot(title = page.postTitle, postSource = page.postSource), automatic,
+                            false, page.notice, captureUnavailable = captureUnavailable)
+                        return@fold
+                    }
                     if (page.postKey.isBlank()) { resetPage(); return@fold }
                     val previous = stream.snapshot
                     val changed = stream.follow(pkg, page, collect)
@@ -148,6 +165,7 @@ open class ChatCaptureService : AccessibilityService() {
                     if (changed) { failure = ""; retryAt = 0; elapsed = 0 }
                     if (requested) manualRun = true
                     ocrAreas = page.ocrAreas
+                    captureUnavailable = if (pkg == "tv.danmaku.bili" && !page.recognized) "当前屏幕暂无可读取的评论" else ""
                     overlay?.show()
                     publish()
                     if (wantsOcr != null) recognizeArticle(page, wantsOcr) else analyzeNext()
@@ -258,6 +276,7 @@ open class ChatCaptureService : AccessibilityService() {
         val message = when {
             failure.isNotBlank() -> failure
             cacheFailure.isNotBlank() -> cacheFailure
+            captureUnavailable.isNotBlank() -> captureUnavailable
             ocrRunning -> "正在本机识别本屏正文…"
             judging -> "Jev 正在判断新文字…"
             automatic && pending -> "等待判断新文字"
@@ -266,7 +285,8 @@ open class ChatCaptureService : AccessibilityService() {
             else -> "手动模式 · 点击下方分析本屏"
         }
         overlay?.update(stream.snapshot, automatic, judging || ocrRunning || (reading && manualRun), message,
-            failure.isNotBlank() || cacheFailure.isNotBlank(), ocrAvailable = ocrAreas.isNotEmpty())
+            failure.isNotBlank() || cacheFailure.isNotBlank(), ocrAvailable = ocrAreas.isNotEmpty(),
+            captureUnavailable = captureUnavailable)
     }
 
     private fun saveCache() {
@@ -290,9 +310,16 @@ open class ChatCaptureService : AccessibilityService() {
 
     private fun currentWindowIdentity(): CaptureWindow? {
         val root = currentAppRoot() ?: return null
-        return try { CaptureWindow(root.packageName?.toString().orEmpty(), root.windowId) }
+        return try { windowIdentity(root) }
         finally { root.recycle() }
     }
+
+    private fun windowIdentity(root: AccessibilityNodeInfo): CaptureWindow? = runCatching {
+        val pkg = root.packageName?.toString().orEmpty()
+        val key = if (pkg == "tv.danmaku.bili")
+            CommentPageParser.parse(pkg, CommentNodeReader.readBilibiliIdentity(root)).postKey else ""
+        CaptureWindow(pkg, root.windowId, key)
+    }.getOrNull()
 
     override fun onInterrupt() { if (alive) resetPage() }
     override fun onDestroy() {

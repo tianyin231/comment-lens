@@ -14,6 +14,7 @@ class CaptureGuardTest {
         assertFalse(CaptureGuard.isActivity("android.widget.RelativeLayout"))
     }
     private val postWindow = CaptureWindow("com.max.xiaoheihe", 7)
+    private val videoWindow = CaptureWindow("tv.danmaku.bili", 7, "BV1xx411c7mD")
     private fun guard(mode: CommentCaptureMode = CommentCaptureMode.MANUAL) =
         CaptureGuard(mode).apply { updateWindow(postWindow) }
 
@@ -94,5 +95,44 @@ class CaptureGuardTest {
             assertTrue(guard.isCurrent(ticket))
             assertTrue(guard.accepts(ticket, postWindow.copy()))
         }
+    }
+
+    @Test fun switchingVideosInTheSamePackageAndWindowInvalidatesOldTickets() {
+        val guard = CaptureGuard().apply { updateWindow(videoWindow) }
+        val old = guard.token()!!
+        val next = videoWindow.copy(contentKey = "BV1yy411c7mD")
+        assertTrue(guard.updateWindow(next))
+        assertFalse(guard.isCurrent(old))
+        assertFalse(guard.accepts(old, next))
+        assertTrue(guard.accepts(guard.token()!!, next))
+    }
+
+    @Test fun callbacksRejectChangedOrUnreadableVideoIdsBeforeTheNextPoll() {
+        val guard = CaptureGuard().apply { updateWindow(videoWindow) }
+        val ticket = guard.token()!!
+        assertFalse(guard.accepts(ticket, videoWindow.copy(contentKey = "BV1yy411c7mD")))
+        assertFalse(guard.accepts(ticket, videoWindow.copy(contentKey = "")))
+        assertTrue(guard.isCurrent(ticket))
+        assertTrue(guard.accepts(ticket, videoWindow.copy()))
+    }
+
+    @Test fun repeatedPollsForTheSameVideoKeepCurrentTicketsValid() {
+        val guard = CaptureGuard().apply { updateWindow(videoWindow) }
+        val ticket = guard.token()!!
+        repeat(3) {
+            assertFalse(guard.updateWindow(videoWindow.copy()))
+            assertTrue(guard.isCurrent(ticket))
+            assertTrue(guard.accepts(ticket, videoWindow.copy()))
+        }
+    }
+
+    @Test fun temporarilyUnreadableVideoIdInvalidatesOldTicketsEvenAfterItReturns() {
+        val guard = CaptureGuard().apply { updateWindow(videoWindow) }
+        val old = guard.token()!!
+        assertTrue(guard.updateWindow(videoWindow.copy(contentKey = "")))
+        assertFalse(guard.isCurrent(old))
+        assertTrue(guard.updateWindow(videoWindow))
+        assertFalse(guard.accepts(old, videoWindow))
+        assertTrue(guard.accepts(guard.token()!!, videoWindow))
     }
 }

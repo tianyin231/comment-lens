@@ -107,9 +107,9 @@ class MainActivity : AppCompatActivity() {
         container.addView(toggle)
 
         container.addView(sectionLabel("怎么使用"))
-        container.addView(text("1. 打开小黑盒帖子，点击屏幕右边的细条。\n2. 默认手动：点“分析当前屏幕”；或打开“自动跟随帖子”。\n3. 照常浏览，新帖自动开始，返回已缓存的帖子可恢复。\n青绿表示正面，珊瑚红表示负面，灰色表示中性或不确定。上方小点单独表示帖文情绪。\n点击色条查看详情，上下拖动可调整位置。", 13f, sub)
+        container.addView(text("1. 打开小黑盒帖子，或 B站视频评论页，点击屏幕右边的细条。\n2. B站首次进入视频时，先点一下简介中的视频标题展开，再切到评论页。\n3. 默认手动：点“分析当前屏幕”；或打开“自动跟随帖子”。\n4. 照常浏览，新内容独立统计，返回已识别的缓存内容可恢复。\n青绿表示正面，珊瑚红表示负面，灰色表示中性或不确定。上方小点单独表示帖文情绪。\n点击色条查看详情，上下拖动可调整位置。", 13f, sub)
             .apply { setPadding(0, dp(8), 0, dp(10)) })
-        container.addView(text("情绪条统计本帖全部已判断的去重评论，展开可查看全部评论与结果。最近 5 帖的文字与结果缓存在本机，返回同帖可恢复，已判断的文字不再上传。比例不代表人数或对原帖的赞成 / 反对。\n当前已适配小黑盒帖子评论，B 站评论 / 弹幕适配尚未完成。", 12f, sub))
+        container.addView(text("情绪条统计当前内容全部已判断的去重评论，展开可查看评论与结果。最近 5 条内容的文字与结果缓存在本机，已判断的文字不再上传。比例不代表人数或对原帖的赞成 / 反对。\n当前支持小黑盒帖子评论和 B站普通视频页本屏已加载的评论文字。B站视频、声音和弹幕不参与分析；完整楼中楼暂未适配，游客可读数量由 B站决定。", 12f, sub))
         container.addView(actionRow("关于此二开版本", "基于 Jev 聊天助手 · MIT 开源，查看原项目") {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jev-chat/jev-chat-jarvis")))
         })
