@@ -86,7 +86,13 @@ class BilibiliActivity : AppCompatActivity() {
         })
         body.addView(Button(this).apply { text = "返回"; setOnClickListener { finish() } })
         setContentView(ScrollView(this).apply { addView(body) })
-        readShare(intent)
+        if (savedInstanceState == null) {
+            readShare(intent)
+        } else {
+            input.setText(savedInstanceState.getString(STATE_INPUT, ""))
+            limit.setText(savedInstanceState.getString(STATE_LIMIT, getString(R.string.bilibili_default_limit)))
+            sort.setSelection(savedInstanceState.getInt(STATE_SORT, 0))
+        }
         fun changed() {
             cancelTask()
             showMessage("输入已更新，请点击检查链接。\n${UnavailableBilibiliSource.availability.reason}\n实际读取 0 条，尚未分析。")
@@ -102,6 +108,13 @@ class BilibiliActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent); readShare(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_INPUT, input.text.toString())
+        outState.putString(STATE_LIMIT, limit.text.toString())
+        outState.putInt(STATE_SORT, sort.selectedItemPosition)
+        super.onSaveInstanceState(outState)
     }
 
     private fun readShare(intent: Intent) {
@@ -212,5 +225,11 @@ class BilibiliActivity : AppCompatActivity() {
     override fun onDestroy() {
         tasks.invalidate(); task?.cancel(true); worker.shutdownNow()
         super.onDestroy()
+    }
+
+    private companion object {
+        const val STATE_INPUT = "bilibili_input"
+        const val STATE_LIMIT = "bilibili_limit"
+        const val STATE_SORT = "bilibili_sort"
     }
 }

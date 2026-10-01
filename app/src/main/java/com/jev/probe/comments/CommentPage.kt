@@ -51,8 +51,8 @@ object CommentPageParser {
         if (!detail || post == null) return CommentPage(notice = "当前未能确定小黑盒帖子正文，请打开单篇帖子。")
         val title = post.value("tv_title")
         val body = post.named("tv_desc").map { it.text.trim() }.filter { it.isNotBlank() }.joinToString("\n")
+        // 标题栏作者会随滚动出现或消失，不能作为稳定帖标识。
         val author = root.named("post_like").toList().singleOrNull()?.value("bbs_name").orEmpty()
-            .ifBlank { root.value("title_name") }
         // 长文可能没有独立标题。用完整正文生成标识，不能把文章的相同开头当作同一帖。
         val key = if (title.isBlank() && body.isBlank()) "" else MessageDigest.getInstance("SHA-256")
             .digest("$author\u0000$title\u0000$body".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }

@@ -116,6 +116,23 @@ class LongPostRegressionTest {
         assertEquals(listOf("新增评论"), stream.pending().texts.map { it.text })
     }
 
+    @Test fun rootLevelBodyKeepsIdentityAndJudgmentsWhenToolbarAuthorAppears() {
+        val body = content("", "没有作者容器的根级长文正文")
+        val top = parse(detail(body, "已读评论", author = ""))
+        val scrolled = parse(detail(body, "已读评论", author = "帖文作者"))
+        assertTrue(top.postKey.isNotBlank())
+        assertEquals("标题栏作者出现后，应继续跟随同一篇长文", top.postKey, scrolled.postKey)
+        val stream = LiveSentiment()
+        stream.follow(pkg, top, true)
+        val batch = stream.pending()
+        assertTrue(stream.apply(batch, batch.texts.associate { it.id to positive }))
+        val judged = stream.snapshot
+        assertFalse(stream.follow(pkg, scrolled, true))
+        assertEquals("正文和评论的已有判断应完整保留", judged, stream.snapshot)
+        assertTrue(stream.pending().texts.isEmpty())
+        assertEquals(1, stream.cachedPosts().size)
+    }
+
     @Test fun bodyMetadataOutsideSelectorsIsExcludedFromPostText() {
         val body = content("标题", "正文").copy(children = content("标题", "正文").children + listOf(
             node("bbs_name", "昵称噪音"), node("bbs_desc", "昨天·上海"), node("tv_like", "999")))
