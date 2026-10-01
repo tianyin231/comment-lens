@@ -121,12 +121,13 @@ class ScreenCapture(
                     ?: service.rootInActiveWindow
             }.getOrNull()
             val windowId = node?.windowId
+            windowBounds = try {
+                node?.window?.let { window ->
+                    try { Rect().also(window::getBoundsInScreen).takeIf { it.width() > 0 && it.height() > 0 } }
+                    finally { window.recycle() }
+                }
+            } finally { node?.recycle() }
             if (windowId != null && windowId != -1) {
-                windowBounds = runCatching {
-                    val r = Rect()
-                    node.window?.getBoundsInScreen(r)
-                    r
-                }.getOrNull()?.takeIf { it.width() > 0 && it.height() > 0 }
                 try {
                     service.takeScreenshotOfWindow(windowId, exec, cb)
                     main.postDelayed(timeout, TIMEOUT_MS)
@@ -136,6 +137,7 @@ class ScreenCapture(
                     Log.w(TAG, "takeScreenshotOfWindow unavailable: ${e.javaClass.simpleName}")
                 }
             }
+            windowBounds = null
         }
         try {
             service.takeScreenshot(Display.DEFAULT_DISPLAY, exec, cb)
@@ -159,6 +161,9 @@ class ScreenCapture(
             runCatching { hw?.recycle() }
             if (bmp == null) {
                 Result.Failed(CODE_INTERNAL, "截屏失败：拿到的画面读不出来")
+            } else if (isBlank(bmp)) {
+                bmp.recycle()
+                Result.Failed(CODE_EMPTY, "系统返回空白截图，请重启模拟器或设备后重试。")
             } else {
                 val dm = service.resources.displayMetrics
                 val w = window?.width() ?: dm.widthPixels
@@ -174,6 +179,16 @@ class ScreenCapture(
         }
     }
 
+    /** 部分模拟器会成功回调一张全黑图，不能把它当作正常的无文字页面。 */
+    private fun isBlank(bitmap: Bitmap): Boolean {
+        val row = IntArray(bitmap.width)
+        for (y in 0 until bitmap.height) {
+            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+            if (row.any { it ushr 24 != 0 && it and 0x00ffffff != 0 }) return false
+        }
+        return true
+    }
+
     companion object {
         private const val TAG = "JEVASSIST"
 
@@ -181,6 +196,7 @@ class ScreenCapture(
         const val CODE_THROTTLED = -1
         /** Our own watchdog: the platform callback never arrived. */
         const val CODE_TIMEOUT = -2
+        private const val CODE_EMPTY = -3
         private const val CODE_INTERNAL = 1
 
         private const val MIN_INTERVAL_MS = 1000L

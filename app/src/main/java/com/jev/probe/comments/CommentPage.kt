@@ -9,7 +9,8 @@ data class NodeArea(val left: Int, val top: Int, val right: Int, val bottom: Int
 /** 平台解析器只读取正文节点；保留树结构以确定回复所属的楼。 */
 data class CommentNode(
     val id: String = "", val text: String = "", val visible: Boolean = true,
-    val area: NodeArea = NodeArea(0, 0, 0, 0), val children: List<CommentNode> = emptyList()
+    val area: NodeArea = NodeArea(0, 0, 0, 0), val children: List<CommentNode> = emptyList(),
+    val className: String = "", val role: String = ""
 ) {
     fun all(): Sequence<CommentNode> = sequence { yield(this@CommentNode); children.forEach { yieldAll(it.all()) } }
     fun named(name: String) = all().filter { it.id.substringAfterLast('/') == name }
@@ -20,7 +21,9 @@ data class CommentPage(
     val comments: List<CapturedComment> = emptyList(),
     val postTitle: String = "", val postBody: String = "", val postKey: String = "",
     val recognized: Boolean = false,
-    val notice: String = "此页面尚未识别出评论控件。请框选评论正文，手动核对后加入。"
+    val notice: String = "此页面尚未识别出评论控件。请框选评论正文，手动核对后加入。",
+    val postSource: String = "", val postTextAvailable: Boolean = true,
+    val ocrAreas: List<NodeArea> = emptyList()
 )
 
 object CommentPageParser {
@@ -44,12 +47,23 @@ object CommentPageParser {
     }
 
     private fun xiaoheihe(root: CommentNode): CommentPage {
-        val post = root.named("post_content_container").firstOrNull()
-        val title = post?.named("tv_title")?.firstOrNull()?.text?.trim().orEmpty()
-        val body = post?.value("tv_desc").orEmpty()
-        val author = root.named("post_like").firstOrNull()?.value("bbs_name").orEmpty().ifBlank { root.value("title_name") }
-        // 没有暴露平台帖子 ID 时，用作者、标题、正文识别换帖；服务另行处理页面导航。
-        val key = if (title.isBlank()) "" else MessageDigest.getInstance("SHA-256")
+        // 首页卡片也可能复用正文控件；必须同时有详情页的标题栏或评论区标志。
+        // 标志和正文可以滚出可视区域，但仍留在无障碍树中，不能按 visible 丢弃。
+        val detail = root.named("title_name").any() || root.named("tv_all_comment").any()
+        val posts = root.named("post_content_container").toList()
+        val post = posts.singleOrNull()
+        val articleTabs = root.named("tv_tab_title").map { it.text }.toList().containsAll(listOf("正文", "评论"))
+        val web = if (posts.isEmpty() && (articleTabs || detail)) root.named("xiaoheihe_web").toList().singleOrNull()
+            ?.let(XiaoheiheWebArticleParser::parse) else null
+        if (web == null && (!detail || post == null))
+            return CommentPage(notice = "当前未能确定小黑盒帖子正文，请打开单篇帖子。")
+        val title = web?.title ?: post!!.value("tv_title")
+        val body = web?.body ?: post!!.named("tv_desc").map { it.text.trim() }
+            .filter { it.isNotBlank() }.joinToString("\n")
+        // 标题栏作者会随滚动出现或消失，不能作为稳定帖标识。
+        val author = root.named("post_like").toList().singleOrNull()?.value("bbs_name").orEmpty()
+        // 长文可能没有独立标题。用完整正文生成标识，不能把文章的相同开头当作同一帖。
+        val key = web?.key ?: if (title.isBlank() && body.isBlank()) "" else MessageDigest.getInstance("SHA-256")
             .digest("$author\u0000$title\u0000$body".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
         val rows = root.named("vg_comments_detail").toList()
         val comments = mutableListOf<CapturedComment>()
@@ -77,7 +91,10 @@ object CommentPageParser {
         }
         val recognized = rows.isNotEmpty() && root.named("tv_all_comment").any()
         return CommentPage(comments.distinctBy { it.fingerprint }, title, body, key, recognized,
-            if (recognized) "已读取小黑盒评论正文及回复关系" else "当前未发现小黑盒帖子评论区，请打开帖子评论。")
+            if (recognized) "已读取小黑盒评论正文及回复关系" else "当前未发现小黑盒帖子评论区，请打开帖子评论。",
+            postSource = if (web != null) "长文可见文字" else "",
+            postTextAvailable = web == null || web.textAreas.isNotEmpty(),
+            ocrAreas = web?.textAreas.orEmpty())
     }
 
     fun inRegion(root: CommentNode, area: NodeArea): List<CapturedComment> = root.all()

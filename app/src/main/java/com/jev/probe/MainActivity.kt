@@ -91,6 +91,9 @@ class MainActivity : AppCompatActivity() {
 
         // Actions
         container.addView(sectionLabel("其他"))
+        container.addView(actionRow("B站视频链接", "识别分享链接 · 评论获取暂未启用") {
+            startActivity(Intent(this, BilibiliActivity::class.java))
+        })
         container.addView(actionRow("实时情绪设置", "手动 / 自动跟随 · Jev 接口") {
             startActivity(Intent(this, SettingsActivity::class.java))
         })
