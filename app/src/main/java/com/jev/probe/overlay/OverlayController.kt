@@ -38,6 +38,7 @@ class OverlayController(private val ctx: Context) {
     private var manualButton: TextView? = null
     private var ocrButton: TextView? = null
     private var canOcr = false
+    private var captureUnavailable = ""
     private var scroll: ScrollView? = null
     private var snapshot = LiveSnapshot()
     private var automatic = false
@@ -65,11 +66,12 @@ class OverlayController(private val ctx: Context) {
     }
 
     fun update(value: LiveSnapshot, auto: Boolean, busy: Boolean, message: String, error: Boolean = false,
-        ocrAvailable: Boolean = false) {
+        ocrAvailable: Boolean = false, captureUnavailable: String = "") {
         val changed = snapshot != value
         val changedPost = snapshot.postKey != value.postKey
         snapshot = value; automatic = auto; working = busy; status = message; failed = error
         canOcr = ocrAvailable
+        this.captureUnavailable = captureUnavailable
         rail?.apply {
             contentDescription = "本帖评论情绪，已判断 ${value.judged.size} 条：正面 ${value.percent(Sentiment.POSITIVE)}%，负面 ${value.percent(Sentiment.NEGATIVE)}%。点击展开，上下拖动调整位置"
             invalidate()
@@ -193,9 +195,9 @@ class OverlayController(private val ctx: Context) {
         changingSwitch = true; modeSwitch?.isChecked = automatic; changingSwitch = false
         statusText?.apply { text = status; setTextColor(if (failed) negative else sub) }
         manualButton?.apply {
-            visibility = if (automatic) View.GONE else View.VISIBLE
-            isEnabled = !working; alpha = if (working) .5f else 1f
-            text = if (working) "Jev 判断中…" else "分析当前屏幕"
+            visibility = if (automatic && captureUnavailable.isBlank()) View.GONE else View.VISIBLE
+            isEnabled = !working && captureUnavailable.isBlank(); alpha = if (isEnabled) 1f else .5f
+            text = captureUnavailable.ifBlank { if (working) "Jev 判断中…" else "分析当前屏幕" }
         }
         ocrButton?.apply {
             visibility = if (canOcr) View.VISIBLE else View.GONE
@@ -209,6 +211,7 @@ class OverlayController(private val ctx: Context) {
         val anchor = if (resetScroll) null else (0 until target.childCount).asSequence().map(target::getChildAt)
             .firstOrNull { it.tag is String && it.bottom > y }?.let { it.tag to (it.top - y) }
         target.removeAllViews()
+        if (snapshot.title.isNotBlank()) target.addView(text(snapshot.title, 13f, ink, true).apply { maxLines = 2 })
         target.addView(text("评论情绪 · 已判断 ${snapshot.judged.size} 条", 11f, sub))
         val stats = LinearLayout(ctx)
         stats.addView(text("${snapshot.percent(Sentiment.POSITIVE)}% 正面", 21f, positive, true), LinearLayout.LayoutParams(0, -2, 1f))
@@ -223,8 +226,11 @@ class OverlayController(private val ctx: Context) {
             val source = snapshot.postSource.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
             target.addView(text("● 帖文$source · ${post.decision?.sentiment?.label ?: "待判断"}", 11f, decisionColor(post.decision?.sentiment)))
             target.addView(text(post.text, 12f, sub).apply { maxLines = 4; setOnClickListener { maxLines = if (maxLines == 4) Int.MAX_VALUE else 4 } })
-        } ?: target.addView(text(if (snapshot.postSource.isBlank()) "打开帖子后，正文会在这里单独显示。"
-            else "切回正文页可读取文章文字；本页评论可单独分析。", 12f, sub))
+        } ?: target.addView(text(when {
+            snapshot.postSource == "B站可见评论" -> "仅分析本屏可读取的评论文字，折叠预览可能包含全文；视频画面、声音和简介未参与判断。"
+            snapshot.postSource.isBlank() -> "打开帖子后，正文会在这里单独显示。"
+            else -> "切回正文页可读取文章文字；本页评论可单独分析。"
+        }, 12f, sub))
         divider(target)
         if (snapshot.comments.isEmpty()) target.addView(text(
             if (automatic) "正常浏览评论区即可，读到的新评论会自动更新。" else "默认手动，可分析本屏，或打开自动跟随。", 13f, sub))

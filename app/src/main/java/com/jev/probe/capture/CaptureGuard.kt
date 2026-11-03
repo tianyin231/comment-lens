@@ -2,7 +2,7 @@ package com.jev.probe.capture
 
 import com.jev.probe.comments.CommentCaptureMode
 
-internal data class CaptureWindow(val packageName: String, val id: Int)
+internal data class CaptureWindow(val packageName: String, val id: Int, val contentKey: String = "")
 
 /** 读屏和判断共用页面代际；同一窗口再次进入页面也不能接受上一次的异步结果。 */
 internal class CaptureGuard(initialMode: CommentCaptureMode = CommentCaptureMode.MANUAL) {
@@ -28,7 +28,7 @@ internal class CaptureGuard(initialMode: CommentCaptureMode = CommentCaptureMode
     fun token(): Token? = window?.let { Token(revision, it) }
     fun isCurrent(token: Token) = token.revision == revision && token.window == window
 
-    // 当前窗口来自回调时的重新读取，也能拦住轮询尚未观察到的前台切换。
+    // 窗口和内容标识在回调时重读，也能拦住轮询尚未观察到的切视频。
     fun accepts(token: Token, current: CaptureWindow?) = isCurrent(token) && token.window == current
 
     companion object {

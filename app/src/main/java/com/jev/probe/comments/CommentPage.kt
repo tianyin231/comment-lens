@@ -10,7 +10,8 @@ data class NodeArea(val left: Int, val top: Int, val right: Int, val bottom: Int
 data class CommentNode(
     val id: String = "", val text: String = "", val visible: Boolean = true,
     val area: NodeArea = NodeArea(0, 0, 0, 0), val children: List<CommentNode> = emptyList(),
-    val className: String = "", val role: String = ""
+    val className: String = "", val role: String = "",
+    val description: String = "", val clickable: Boolean = false, val selected: Boolean = false
 ) {
     fun all(): Sequence<CommentNode> = sequence { yield(this@CommentNode); children.forEach { yieldAll(it.all()) } }
     fun named(name: String) = all().filter { it.id.substringAfterLast('/') == name }
@@ -23,12 +24,13 @@ data class CommentPage(
     val recognized: Boolean = false,
     val notice: String = "此页面尚未识别出评论控件。请框选评论正文，手动核对后加入。",
     val postSource: String = "", val postTextAvailable: Boolean = true,
-    val ocrAreas: List<NodeArea> = emptyList()
+    val ocrAreas: List<NodeArea> = emptyList(), val needsIdentity: Boolean = false
 )
 
 object CommentPageParser {
     fun parse(pkg: String, root: CommentNode): CommentPage = when (pkg) {
         "com.max.xiaoheihe" -> xiaoheihe(root)
+        "tv.danmaku.bili" -> BilibiliVisiblePageParser.parse(root)
         else -> CommentPage()
     }
 
