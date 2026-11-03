@@ -54,7 +54,11 @@ class CommentContextTest {
             node("post_content_container", children = arrayOf(node("tv_title", "同一标题"), node("tv_desc", "同一正文")))))
         val top = node("root", children = arrayOf(content, node("title_name", "")))
         val scrolled = node("root", children = arrayOf(content.copy(visible = false), node("title_name", "同一作者")))
-        assertEquals(CommentPageParser.parse("com.max.xiaoheihe", top).postKey, CommentPageParser.parse("com.max.xiaoheihe", scrolled).postKey)
+        val topPage = CommentPageParser.parse("com.max.xiaoheihe", top)
+        val scrolledPage = CommentPageParser.parse("com.max.xiaoheihe", scrolled)
+        assertTrue(topPage.postKey.isNotBlank())
+        assertTrue(scrolledPage.postKey.isNotBlank())
+        assertEquals(topPage.postKey, scrolledPage.postKey)
     }
 
     @Test fun sameTextUnderDifferentParentsIsNotMerged() {

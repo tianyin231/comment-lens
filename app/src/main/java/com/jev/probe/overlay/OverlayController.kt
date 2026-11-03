@@ -36,6 +36,8 @@ class OverlayController(private val ctx: Context) {
     private var statusText: TextView? = null
     private var modeSwitch: Switch? = null
     private var manualButton: TextView? = null
+    private var ocrButton: TextView? = null
+    private var canOcr = false
     private var scroll: ScrollView? = null
     private var snapshot = LiveSnapshot()
     private var automatic = false
@@ -45,6 +47,7 @@ class OverlayController(private val ctx: Context) {
     private var changingSwitch = false
     var onCapture: (() -> Unit)? = null
     var onToggleAuto: (() -> Unit)? = null
+    var onOcr: (() -> Unit)? = null
 
     private val ink = Color.rgb(37, 49, 57)
     private val sub = Color.rgb(111, 124, 131)
@@ -61,10 +64,12 @@ class OverlayController(private val ctx: Context) {
         else -> quiet
     }
 
-    fun update(value: LiveSnapshot, auto: Boolean, busy: Boolean, message: String, error: Boolean = false) {
+    fun update(value: LiveSnapshot, auto: Boolean, busy: Boolean, message: String, error: Boolean = false,
+        ocrAvailable: Boolean = false) {
         val changed = snapshot != value
         val changedPost = snapshot.postKey != value.postKey
         snapshot = value; automatic = auto; working = busy; status = message; failed = error
+        canOcr = ocrAvailable
         rail?.apply {
             contentDescription = "本帖评论情绪，已判断 ${value.judged.size} 条：正面 ${value.percent(Sentiment.POSITIVE)}%，负面 ${value.percent(Sentiment.NEGATIVE)}%。点击展开，上下拖动调整位置"
             invalidate()
@@ -122,6 +127,10 @@ class OverlayController(private val ctx: Context) {
         try { node.windowId == id } finally { node.recycle() }
     }
 
+    fun hideForCapture(hidden: Boolean) {
+        listOfNotNull(rail, panel).forEach { it.visibility = if (hidden) View.INVISIBLE else View.VISIBLE }
+    }
+
     private fun expand() {
         if (rail == null || panel != null) return
         val body = LinearLayout(ctx).apply {
@@ -156,6 +165,10 @@ class OverlayController(private val ctx: Context) {
             layoutParams = LinearLayout.LayoutParams(-1, dp(42)).apply { topMargin = dp(10) }
         }
         body.addView(manualButton)
+        ocrButton = action("OCR 识别并分析本屏正文") { onOcr?.invoke() }.apply {
+            gravity = Gravity.CENTER; setTextColor(positive)
+        }
+        body.addView(ocrButton)
         body.addView(text("点：帖文  ·  条：本帖全部评论  ·  灰色：中性或不确定", 10f, sub))
         val height = minOf(dp(510), screen.height() - dp(90))
         val lp = params(minOf(dp(330), screen.width() - dp(38)), height).apply {
@@ -173,7 +186,7 @@ class OverlayController(private val ctx: Context) {
 
     private fun collapse() {
         panel?.let { runCatching { wm.removeView(it) } }
-        panel = null; content = null; statusText = null; modeSwitch = null; manualButton = null; scroll = null
+        panel = null; content = null; statusText = null; modeSwitch = null; manualButton = null; scroll = null; ocrButton = null
     }
 
     private fun updateControls() {
@@ -183,6 +196,10 @@ class OverlayController(private val ctx: Context) {
             visibility = if (automatic) View.GONE else View.VISIBLE
             isEnabled = !working; alpha = if (working) .5f else 1f
             text = if (working) "Jev 判断中…" else "分析当前屏幕"
+        }
+        ocrButton?.apply {
+            visibility = if (canOcr) View.VISIBLE else View.GONE
+            isEnabled = !working; alpha = if (working) .5f else 1f
         }
     }
 
@@ -203,9 +220,11 @@ class OverlayController(private val ctx: Context) {
             "中性 ${snapshot.count(Sentiment.NEUTRAL)} · 褒贬混合 ${snapshot.count(Sentiment.MIXED)} · 不确定 ${snapshot.count(Sentiment.UNCERTAIN)}", 11f, sub))
         divider(target)
         snapshot.post?.let { post ->
-            target.addView(text("● 帖文 · ${post.decision?.sentiment?.label ?: "待判断"}", 11f, decisionColor(post.decision?.sentiment)))
+            val source = snapshot.postSource.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+            target.addView(text("● 帖文$source · ${post.decision?.sentiment?.label ?: "待判断"}", 11f, decisionColor(post.decision?.sentiment)))
             target.addView(text(post.text, 12f, sub).apply { maxLines = 4; setOnClickListener { maxLines = if (maxLines == 4) Int.MAX_VALUE else 4 } })
-        } ?: target.addView(text("打开帖子后，正文会在这里单独显示。", 12f, sub))
+        } ?: target.addView(text(if (snapshot.postSource.isBlank()) "打开帖子后，正文会在这里单独显示。"
+            else "切回正文页可读取文章文字；本页评论可单独分析。", 12f, sub))
         divider(target)
         if (snapshot.comments.isEmpty()) target.addView(text(
             if (automatic) "正常浏览评论区即可，读到的新评论会自动更新。" else "默认手动，可分析本屏，或打开自动跟随。", 13f, sub))

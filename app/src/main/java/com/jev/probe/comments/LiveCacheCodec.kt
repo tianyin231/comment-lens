@@ -10,7 +10,8 @@ object LiveCacheCodec {
             posts.forEach { post ->
                 put(JSONObject().put("key", post.postKey).put("title", post.title)
                     .put("post", post.post?.let(::encodeText) ?: JSONObject.NULL)
-                    .put("comments", JSONArray().apply { post.comments.forEach { put(encodeText(it)) } }))
+                    .put("comments", JSONArray().apply { post.comments.forEach { put(encodeText(it)) } })
+                    .apply { if (post.postSource.isNotBlank()) put("postSource", post.postSource) })
             }
         }).toString()
 
@@ -22,7 +23,8 @@ object LiveCacheCodec {
             val post = posts.getJSONObject(index)
             val comments = post.getJSONArray("comments")
             LiveSnapshot(post.getString("title"), post.optJSONObject("post")?.let(::decodeText),
-                (0 until comments.length()).map { decodeText(comments.getJSONObject(it)) }, post.getString("key"))
+                (0 until comments.length()).map { decodeText(comments.getJSONObject(it)) }, post.getString("key"),
+                post.optString("postSource", ""))
         }
     }
 
